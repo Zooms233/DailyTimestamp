@@ -25,8 +25,10 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
-    // 每秒刷新"已持续"时长
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) => setState(() {}));
+    // 低频刷新"已持续"时长（分钟粒度显示，10s 足够；无进行中事件时页面无时间相关内容，跳过重建）
+    _timer = Timer.periodic(const Duration(seconds: 10), (_) {
+      if (EventStore.instance.ongoing != null) setState(() {});
+    });
   }
 
   @override

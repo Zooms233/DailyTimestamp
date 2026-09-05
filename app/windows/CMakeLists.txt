@@ -2,6 +2,9 @@
 cmake_minimum_required(VERSION 3.14)
 project(daily_timestamp LANGUAGES CXX)
 
+# 源码含中文字符串（窗口标题/资源描述），统一按 UTF-8 编译
+add_compile_options(/utf-8)
+
 # The name of the executable created for the application. Change this to change
 # the on-disk name of your application.
 set(BINARY_NAME "daily_timestamp")

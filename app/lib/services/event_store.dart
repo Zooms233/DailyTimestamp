@@ -2,14 +2,32 @@
 /// 原子写：先写 tmp 再 rename，防断电损坏。
 library;
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../models/timestamp_event.dart';
+
+/// 后台 isolate 解析整份 JSON（compute 入口须为顶层函数）。
+/// 返回 (事件, 分类, 旧版自定义分类, 分类色)。
+(List<TimestampEvent>, List<String>, List<String>, Map<String, int>)
+    _parseFile(String raw) {
+  final data = jsonDecode(raw) as Map<String, dynamic>;
+  return (
+    (data['events'] as List? ?? [])
+        .map((e) => TimestampEvent.fromJson(e as Map<String, dynamic>))
+        .toList(),
+    (data['labels'] as List? ?? []).cast<String>().toList(),
+    (data['customLabels'] as List? ?? []).cast<String>().toList(),
+    (data['colors'] as Map? ?? {})
+        .map((k, v) => MapEntry(k as String, v as int)),
+  );
+}
 
 /// 某一天的统计聚合结果。
 class DayStat {
@@ -52,6 +70,9 @@ class EventStore extends ChangeNotifier {
   final List<TimestampEvent> _events = [];
   final List<String> _labels = [];
   final Map<String, int> _labelColors = {}; // 用户改过的分类色（持久化）
+  Timer? _saveTimer;
+  bool _saving = false;
+  bool _resaveQueued = false;
 
   bool get loaded => _loaded;
   bool _loaded = false;
@@ -74,30 +95,28 @@ class EventStore extends ChangeNotifier {
     try {
       final file = await _file();
       if (await file.exists()) {
-        final data = jsonDecode(await file.readAsString()) as Map<String, dynamic>;
+        // 万级事件 JSON 解析放后台 isolate，主线程不卡首帧
+        final (events, labels, legacy, colors) =
+            await compute(_parseFile, await file.readAsString());
         _events
           ..clear()
-          ..addAll((data['events'] as List? ?? [])
-              .map((e) => TimestampEvent.fromJson(e as Map<String, dynamic>)));
-        final labels = data['labels'];
-        if (labels is List && labels.isNotEmpty) {
+          ..addAll(events);
+        if (labels.isNotEmpty) {
           _labels
             ..clear()
-            ..addAll(labels.cast<String>());
+            ..addAll(labels);
         } else {
           // 旧格式兼容：预设 + 旧 customLabels
           _labels
             ..clear()
             ..addAll(defaultLabels);
-          for (final l in data['customLabels'] as List? ?? []) {
-            if (!_labels.contains(l)) _labels.add(l as String);
+          for (final l in legacy) {
+            if (!_labels.contains(l)) _labels.add(l);
           }
         }
         _labelColors
           ..clear()
-          ..addAll((data['colors'] as Map? ?? {}).map(
-            (k, v) => MapEntry(k as String, v as int),
-          ));
+          ..addAll(colors);
       } else {
         _labels
           ..clear()
@@ -311,23 +330,65 @@ class EventStore extends ChangeNotifier {
 
   // ---------- 持久化 ----------
 
-  Future<void> _save() async {
-    try {
-      final file = await _file();
-      final tmp = File('${file.path}.tmp');
-      await tmp.writeAsString(jsonEncode({
+  /// 当前全量数据的 JSON 文本（写盘与导出共用）。
+  String _encode() => jsonEncode({
         'labels': _labels,
         'colors': _labelColors,
         'events': _events.map((e) => e.toJson()).toList(),
-      }));
+      });
+
+  /// 导出快照：当前数据写入应用缓存目录的带时间戳 JSON，返回文件（供分享/复制）。
+  Future<File> exportSnapshot() async {
+    final dir = await getTemporaryDirectory();
+    final n = DateTime.now();
+    String p2(int v) => v.toString().padLeft(2, '0');
+    final file =
+        File('${dir.path}/events_${n.year}${p2(n.month)}${p2(n.day)}_${p2(n.hour)}${p2(n.minute)}.json');
+    await file.writeAsString(_encode());
+    return file;
+  }
+
+  /// 防抖保存：150ms 内连续改动合并为一次写盘。
+  void _save() {
+    _saveTimer?.cancel();
+    _saveTimer = Timer(const Duration(milliseconds: 150), _flush);
+  }
+
+  /// 立即落盘（App 退后台/关闭时调用，防丢最近改动）。
+  void flush() {
+    _saveTimer?.cancel();
+    _saveTimer = null;
+    unawaited(_flush());
+  }
+
+  Future<void> _flush() async {
+    if (_saving) {
+      // 上一笔还在写：排队补写一次，保证最终状态落盘且串行
+      _resaveQueued = true;
+      return;
+    }
+    _saving = true;
+    try {
+      final file = await _file();
+      final tmp = File('${file.path}.tmp');
+      await tmp.writeAsString(_encode());
       try {
         await tmp.rename(file.path);
       } catch (_) {
-        if (await file.exists()) await file.delete();
-        await tmp.rename(file.path);
+        // 仅当 tmp 仍在（rename 因其它原因失败）才覆盖目标；tmp 已被移走则跳过
+        if (await tmp.exists()) {
+          if (await file.exists()) await file.delete();
+          await tmp.rename(file.path);
+        }
       }
     } catch (e) {
       debugPrint('EventStore.save: $e');
+    } finally {
+      _saving = false;
+      if (_resaveQueued) {
+        _resaveQueued = false;
+        unawaited(_flush());
+      }
     }
   }
 

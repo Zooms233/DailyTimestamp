@@ -2,8 +2,11 @@
 library;
 
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../services/event_store.dart';
 import '../utils/format.dart';
@@ -34,7 +37,34 @@ class _StatsPageState extends State<StatsPage> {
 
   bool get _isToday {
     final now = DateTime.now();
-    return _day.year == now.year && _day.month == now.month && _day.day == now.day;
+    return _day.year == now.year &&
+        _day.month == now.month &&
+        _day.day == now.day;
+  }
+
+  /// 导出数据：Windows 直存系统下载目录；Android 走系统分享面板。
+  Future<void> _export() async {
+    final messenger = ScaffoldMessenger.of(context);
+    void tip(String msg) => messenger.showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        duration: const Duration(milliseconds: 1500),
+      ),
+    );
+    try {
+      final snapshot = await EventStore.instance.exportSnapshot();
+      if (Platform.isWindows) {
+        final dir = await getDownloadsDirectory();
+        if (dir == null) throw '找不到系统下载目录';
+        final name = snapshot.uri.pathSegments.last;
+        await snapshot.copy('${dir.path}${Platform.pathSeparator}$name');
+        tip('已导出到下载目录：$name');
+      } else {
+        await Share.shareXFiles([XFile(snapshot.path)], text: '时间戳数据备份');
+      }
+    } catch (e) {
+      tip('导出失败：$e');
+    }
   }
 
   @override
@@ -47,65 +77,82 @@ class _StatsPageState extends State<StatsPage> {
       ..sort((a, b) => b.value.compareTo(a.value));
     final totalMinutes = stat.recorded.inMinutes + stat.unrecorded.inMinutes;
 
-    return SafeArea(
-      child: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          Text(fmtDay(_day), style: theme.textTheme.titleMedium),
-          const SizedBox(height: 4),
-          Text(
-            '已记录 ${fmtHm(stat.recorded.inMinutes)} · 未记录 ${fmtHm(stat.unrecorded.inMinutes)}',
-            style: theme.textTheme.bodyMedium
-                ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-          ),
-          const SizedBox(height: 16),
-          if (stat.recorded == Duration.zero && stat.unrecorded == const Duration(hours: 24))
-            Padding(
-              padding: const EdgeInsets.all(24),
-              child: Text(
-                '这一天没有记录',
-                textAlign: TextAlign.center,
-                style: theme.textTheme.bodyMedium
-                    ?.copyWith(color: theme.colorScheme.outline),
-              ),
-            )
-          else ...[
-            for (final e in rows)
-              _StatRow(
-                label: e.key,
-                minutes: e.value.inMinutes,
-                totalMinutes: totalMinutes,
-              ),
-            _StatRow(
-              label: '空档',
-              minutes: stat.unrecorded.inMinutes,
-              totalMinutes: totalMinutes,
-              isGap: true,
-            ),
-          ],
-          const SizedBox(height: 16),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              OutlinedButton(
-                onPressed: () => setState(() =>
-                    _day = DateTime(_day.year, _day.month, _day.day - 1)),
-                child: const Text('上一日'),
-              ),
-              TextButton(
-                onPressed: _isToday
-                    ? null
-                    : () => setState(() => _day = DateTime.now()),
-                child: const Text('今日'),
-              ),
-              OutlinedButton(
-                onPressed: () => setState(() =>
-                    _day = DateTime(_day.year, _day.month, _day.day + 1)),
-                child: const Text('下一日'),
-              ),
-            ],
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('统计'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.file_upload_outlined),
+            tooltip: '导出数据',
+            onPressed: _export,
           ),
         ],
+      ),
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            Text(fmtDay(_day), style: theme.textTheme.titleMedium),
+            const SizedBox(height: 4),
+            Text(
+              '已记录 ${fmtHm(stat.recorded.inMinutes)} · 未记录 ${fmtHm(stat.unrecorded.inMinutes)}',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 16),
+            if (stat.recorded == Duration.zero &&
+                stat.unrecorded == const Duration(hours: 24))
+              Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  '这一天没有记录',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.outline,
+                  ),
+                ),
+              )
+            else ...[
+              for (final e in rows)
+                _StatRow(
+                  label: e.key,
+                  minutes: e.value.inMinutes,
+                  totalMinutes: totalMinutes,
+                ),
+              _StatRow(
+                label: '空档',
+                minutes: stat.unrecorded.inMinutes,
+                totalMinutes: totalMinutes,
+                isGap: true,
+              ),
+            ],
+            const SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                OutlinedButton(
+                  onPressed: () => setState(
+                    () => _day = DateTime(_day.year, _day.month, _day.day - 1),
+                  ),
+                  child: const Text('上一日'),
+                ),
+                TextButton(
+                  onPressed: _isToday
+                      ? null
+                      : () => setState(() => _day = DateTime.now()),
+                  child: const Text('今日'),
+                ),
+                OutlinedButton(
+                  onPressed: () => setState(
+                    () => _day = DateTime(_day.year, _day.month, _day.day + 1),
+                  ),
+                  child: const Text('下一日'),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -132,7 +179,10 @@ class _StatRow extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
         children: [
-          SizedBox(width: 48, child: Text(label, style: theme.textTheme.bodyMedium)),
+          SizedBox(
+            width: 48,
+            child: Text(label, style: theme.textTheme.bodyMedium),
+          ),
           const SizedBox(width: 8),
           Expanded(
             child: ClipRRect(

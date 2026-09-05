@@ -36,8 +36,30 @@ class RootPage extends StatefulWidget {
   State<RootPage> createState() => _RootPageState();
 }
 
-class _RootPageState extends State<RootPage> {
+class _RootPageState extends State<RootPage> with WidgetsBindingObserver {
   int _index = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    EventStore.instance.flush();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // 退后台/失焦即落盘，防抖窗口内的改动不丢失
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive) {
+      EventStore.instance.flush();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {

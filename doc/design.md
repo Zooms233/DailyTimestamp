@@ -218,7 +218,8 @@ App
 | 项 | 选择 | 理由 |
 |---|---|---|
 | 存储 | 应用文档目录单文件 `events.json`，整文件读写 | MVP 数据量小（一天几十条），无数据库复杂度；单文件天然保证 `events` 与 `customLabels` 一致，备份/迁移=拷一个文件 |
-| 写盘 | **原子写**：先写 `events.json.tmp`，成功后 rename 覆盖 | 防断电/崩溃导致 JSON 半写损坏（两行代码成本，MVP 标配） |
+| 写盘 | **原子写 + 防抖串行**：改动后 150ms 防抖合并写；写盘队列串行化（并发写同一 tmp 有损坏风险）；退后台/失焦/关窗即 `flush()` 落盘 | 防断电/崩溃导致 JSON 半写损坏；防连续快速打卡多次全量写盘；防并发 rename 竞争丢文件 |
+| JSON 解析 | `compute()` 后台 isolate 解析，主线程零阻塞 | 万级事件（1.5MB）同步解析在 Android 弱机可致首帧白屏 200-500ms |
 | 依赖 | 仅 `path_provider`（官方） | 获取应用目录的最低成本；其余全部 Flutter SDK |
 | 状态 | `setState` + 单例 `EventStore` | 事件流单一，状态简单 |
 | 平台 | Android + Windows | 手机随身打点；Windows 本机调试回看。Web 需要 localStorage 存储适配且与桌面调试重复，V2 再议 |
