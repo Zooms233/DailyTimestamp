@@ -6,7 +6,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../models/timestamp_event.dart';
@@ -31,8 +31,27 @@ class EventStore extends ChangeNotifier {
     '代码', '阅读', '游戏', '碎片信息流', '总结', '其他',
   ];
 
+  /// 分类语义色（按分类名匹配最合适的颜色）。
+  static const Map<String, Color> semanticColors = {
+    '睡眠': Colors.indigo,
+    '清洁': Colors.cyan,
+    '吃饭': Colors.orange,
+    '行路': Colors.lightBlue,
+    '学习': Colors.green,
+    '运动': Colors.red,
+    '代码': Colors.blue,
+    '阅读': Colors.amber,
+    '游戏': Colors.purple,
+    '碎片信息流': Colors.blueGrey,
+    '总结': Colors.teal,
+    '其他': Colors.grey,
+    '家务': Colors.brown,
+    '放松': Colors.pink,
+  };
+
   final List<TimestampEvent> _events = [];
   final List<String> _labels = [];
+  final Map<String, int> _labelColors = {}; // 用户改过的分类色（持久化）
 
   bool get loaded => _loaded;
   bool _loaded = false;
@@ -74,6 +93,11 @@ class EventStore extends ChangeNotifier {
             if (!_labels.contains(l)) _labels.add(l as String);
           }
         }
+        _labelColors
+          ..clear()
+          ..addAll((data['colors'] as Map? ?? {}).map(
+            (k, v) => MapEntry(k as String, v as int),
+          ));
       } else {
         _labels
           ..clear()
@@ -139,6 +163,103 @@ class EventStore extends ChangeNotifier {
     _save();
   }
 
+  /// 分类颜色：用户改色优先；未改色按语义表匹配；自定义分类从调色板确定性指派（同序同色，稳定）。
+  Color colorOf(String label) {
+    final saved = _labelColors[label];
+    if (saved != null) return Color(saved);
+    final used = <int>{};
+    for (final l in _labels) {
+      final c = semanticColors[l] ?? _pickUnusedColor(used);
+      if (l == label) return c;
+      used.add(c.toARGB32());
+    }
+    return Colors.blueGrey;
+  }
+
+  /// 用户手动改色（持久化到 colors 字段）。
+  void setLabelColor(String label, int argb) {
+    _labelColors[label] = argb;
+    notifyListeners();
+    _save();
+  }
+
+  /// 从主色板取第一个尚未被已命名分类占用的颜色（确定性）。
+  Color _pickUnusedColor(Set<int> used) {
+    for (final c in Colors.primaries) {
+      if (!used.contains(c.toARGB32())) return c;
+    }
+    return Colors.blueGrey;
+  }
+
+  // ---------- 事件修正（防误触） ----------
+
+  /// 修改事件类别；成功返回 true。
+  bool editLabel(String id, String newLabel) {
+    final text = newLabel.trim();
+    if (text.isEmpty) return false;
+    for (final e in _events) {
+      if (e.id == id) {
+        e.label = text;
+        notifyListeners();
+        _save();
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// 全局时间线上 startAt 相邻的上一条；无则 null。
+  TimestampEvent? previousOf(String id) {
+    final sorted = [..._events]..sort((a, b) => a.startAt.compareTo(b.startAt));
+    final i = sorted.indexWhere((e) => e.id == id);
+    if (i <= 0) return null;
+    return sorted[i - 1];
+  }
+
+  /// 把事件并入其前一条（全局时间线上 startAt 相邻的上一条）：
+  /// 前一条 endAt 扩展为该事件的 endAt（若该事件进行中则前一条变进行中），
+  /// 备注合并，类别**保留前一条的**；返回 false 表示已是第一条或不存在。
+  bool mergeToPrevious(String id) {
+    final sorted = [..._events]..sort((a, b) => a.startAt.compareTo(b.startAt));
+    final i = sorted.indexWhere((e) => e.id == id);
+    if (i <= 0) return false;
+    final cur = sorted[i];
+    final prev = sorted[i - 1];
+    prev.endAt = cur.endAt;
+    final n2 = cur.note;
+    if (n2 != null && n2.isNotEmpty) {
+      final n1 = prev.note;
+      prev.note = (n1 == null || n1.isEmpty) ? n2 : '$n1 · $n2';
+    }
+    _events.remove(cur);
+    notifyListeners();
+    _save();
+    return true;
+  }
+
+  /// 在 atMs 处把事件拆为两段：第一段保留原 id、备注（endAt=atMs），
+  /// 第二段新 id、同类别同备注（startAt=atMs，原 endAt 延续，进行中状态保留）。
+  /// atMs 必须在 (startAt, min(endAt, now)) 开区间内。成功返回 true。
+  bool splitEvent(String id, int atMs) {
+    final i = _events.indexWhere((e) => e.id == id);
+    if (i < 0) return false;
+    final e = _events[i];
+    final upper = e.endAt ?? DateTime.now().millisecondsSinceEpoch;
+    if (atMs <= e.startAt || atMs >= upper) return false;
+    final second = TimestampEvent(
+      id: '${atMs}_${Random().nextInt(65536).toRadixString(16).padLeft(4, '0')}',
+      label: e.label,
+      startAt: atMs,
+      endAt: e.endAt,
+      note: e.note,
+    );
+    e.endAt = atMs;
+    _events.add(second);
+    notifyListeners();
+    _save();
+    return true;
+  }
+
   // ---------- 统计 ----------
 
   /// 某一天（按本地日历日）的统计聚合。
@@ -196,6 +317,7 @@ class EventStore extends ChangeNotifier {
       final tmp = File('${file.path}.tmp');
       await tmp.writeAsString(jsonEncode({
         'labels': _labels,
+        'colors': _labelColors,
         'events': _events.map((e) => e.toJson()).toList(),
       }));
       try {

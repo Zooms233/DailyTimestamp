@@ -10,10 +10,10 @@ class TimestampEvent {
   });
 
   final String id;
-  final String label;
+  String label;
   final int startAt; // 开始，毫秒 epoch
   int? endAt; // 结束，毫秒 epoch；null = 进行中
-  final String? note; // 备注（可空）
+  String? note; // 备注（可空）
 
   bool get isOngoing => endAt == null;
 

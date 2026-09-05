@@ -141,7 +141,9 @@ class _StatRow extends StatelessWidget {
                 value: percent,
                 minHeight: 14,
                 backgroundColor: theme.colorScheme.surfaceContainerHighest,
-                color: isGap ? theme.colorScheme.outline : theme.colorScheme.primary,
+                color: isGap
+                    ? theme.colorScheme.outline
+                    : EventStore.instance.colorOf(label),
               ),
             ),
           ),

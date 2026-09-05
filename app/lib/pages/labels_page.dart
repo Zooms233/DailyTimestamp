@@ -22,6 +22,44 @@ class _LabelsPageState extends State<LabelsPage> {
     super.dispose();
   }
 
+  /// 换色弹窗：从主色板选择，选中即保存。
+  Future<void> _pickColor(String label) async {
+    final picked = await showDialog<Color>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('选择颜色'),
+        content: Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final c in Colors.primaries)
+              InkWell(
+                borderRadius: BorderRadius.circular(20),
+                onTap: () => Navigator.of(ctx).pop(c),
+                child: CircleAvatar(
+                  radius: 18,
+                  backgroundColor: c,
+                  child: c.toARGB32() ==
+                          EventStore.instance.colorOf(label).toARGB32()
+                      ? const Icon(Icons.check, size: 18, color: Colors.white)
+                      : null,
+                ),
+              ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('取消'),
+          ),
+        ],
+      ),
+    );
+    if (picked != null) {
+      EventStore.instance.setLabelColor(label, picked.toARGB32());
+    }
+  }
+
   void _add() {
     final ok = EventStore.instance.addLabel(_controller.text);
     if (ok) {
@@ -87,7 +125,22 @@ class _LabelsPageState extends State<LabelsPage> {
                     final first = i == 0;
                     final last = i == labels.length - 1;
                     return ListTile(
+                      leading: InkWell(
+                        borderRadius: BorderRadius.circular(14),
+                        onTap: () => _pickColor(label),
+                        child: CircleAvatar(
+                          radius: 14,
+                          backgroundColor: EventStore.instance.colorOf(label),
+                          child: const Icon(Icons.colorize,
+                              size: 16, color: Colors.white),
+                        ),
+                      ),
                       title: Text(label),
+                      subtitle: Text(
+                        '点色块改色',
+                        style: theme.textTheme.bodySmall
+                            ?.copyWith(fontSize: 10),
+                      ),
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
