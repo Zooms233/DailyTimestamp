@@ -39,6 +39,9 @@ class RootPage extends StatefulWidget {
 class _RootPageState extends State<RootPage> with WidgetsBindingObserver {
   int _index = 0;
 
+  /// 切到统计 Tab 时通知其重置为今日
+  final _statsKey = GlobalKey<StatsPageState>();
+
   @override
   void initState() {
     super.initState();
@@ -70,12 +73,16 @@ class _RootPageState extends State<RootPage> with WidgetsBindingObserver {
         listenable: EventStore.instance,
         builder: (context, _) => IndexedStack(
           index: _index,
-          children: [HomePage(), StatsPage()],
+          children: [HomePage(), StatsPage(key: _statsKey)],
         ),
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
-        onDestinationSelected: (i) => setState(() => _index = i),
+        onDestinationSelected: (i) {
+          setState(() => _index = i);
+          // 回到统计页时自动显示今日（并收起月历）
+          if (i == 1) _statsKey.currentState?.resetToToday();
+        },
         destinations: const [
           NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home), label: '首页'),
           NavigationDestination(icon: Icon(Icons.bar_chart_outlined), selectedIcon: Icon(Icons.bar_chart), label: '统计'),

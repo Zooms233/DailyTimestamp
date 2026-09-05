@@ -54,25 +54,27 @@ class _PunchSheetState extends State<PunchSheet> {
               runSpacing: 8,
               children: [
                 for (final label in labels)
-                  Builder(builder: (ctx) {
-                    final c = EventStore.instance.colorOf(label);
-                    final onC = c.computeLuminance() > 0.5
-                        ? Colors.black87
-                        : Colors.white;
-                    return ActionChip(
-                      label: Text(label, style: TextStyle(color: onC)),
-                      backgroundColor: c,
-                      side: BorderSide(color: c.withValues(alpha: 0.6)),
-                      onPressed: () => _punch(label),
-                    );
-                  }),
+                  Builder(
+                    builder: (ctx) {
+                      final c = EventStore.instance.colorOf(label);
+                      final onC = c.computeLuminance() > 0.5
+                          ? Colors.black87
+                          : Colors.white;
+                      return ActionChip(
+                        label: Text(label, style: TextStyle(color: onC)),
+                        backgroundColor: c,
+                        side: BorderSide(color: c.withValues(alpha: 0.6)),
+                        onPressed: () => _punch(label),
+                      );
+                    },
+                  ),
               ],
             ),
             const SizedBox(height: 16),
             TextField(
               controller: _noteController,
               decoration: const InputDecoration(
-                hintText: '备注（可空，例如：《原子习惯》第 3 章）',
+                hintText: '备注',
                 border: OutlineInputBorder(),
                 isDense: true,
               ),

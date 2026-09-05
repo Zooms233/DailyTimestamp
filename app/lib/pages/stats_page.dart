@@ -1,4 +1,4 @@
-/// 统计页（设计文档 3.3）：按日聚合时长 + 占比条形 + 上一日/下一日翻页。
+/// 统计页（设计文档 3.3）：月历跳日 + 按日聚合时长 + 占比条形。
 library;
 
 import 'dart:async';
@@ -15,12 +15,24 @@ class StatsPage extends StatefulWidget {
   const StatsPage({super.key});
 
   @override
-  State<StatsPage> createState() => _StatsPageState();
+  State<StatsPage> createState() => StatsPageState();
 }
 
-class _StatsPageState extends State<StatsPage> {
+class StatsPageState extends State<StatsPage> {
   DateTime _day = DateTime.now();
   Timer? _timer;
+
+  /// 月历条是否展开（false = 收缩周条）
+  bool _calExpanded = false;
+
+  /// 月历展开时浏览的月份（仅日历显示，与统计日独立；收起时忽略）
+  DateTime _calMonth = DateTime.now();
+
+  /// 从打卡页切回统计 Tab 时调用：重置为今日并收起月历。
+  void resetToToday() => setState(() {
+        _day = DateTime.now();
+        _calExpanded = false;
+      });
 
   @override
   void initState() {
@@ -33,13 +45,6 @@ class _StatsPageState extends State<StatsPage> {
   void dispose() {
     _timer?.cancel();
     super.dispose();
-  }
-
-  bool get _isToday {
-    final now = DateTime.now();
-    return _day.year == now.year &&
-        _day.month == now.month &&
-        _day.day == now.day;
   }
 
   /// 导出数据：Windows 直存系统下载目录；Android 走系统分享面板。
@@ -67,6 +72,202 @@ class _StatsPageState extends State<StatsPage> {
     }
   }
 
+  // ---------- 月历条 ----------
+
+  DateTime _weekStart(DateTime d) =>
+      DateTime(d.year, d.month, d.day - (d.weekday - 1));
+
+  static bool _sameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
+
+  /// 展开/收起月历；展开时定位到统计日所在月。
+  void _toggleCalendar() => setState(() {
+        _calExpanded = !_calExpanded;
+        _calMonth = DateTime(_day.year, _day.month, 1);
+      });
+
+  /// 展开态切换浏览月份；只改月历显示，不改统计日。
+  void _shiftCalMonth(int delta) => setState(() {
+        _calMonth = DateTime(_calMonth.year, _calMonth.month + delta, 1);
+      });
+
+  /// 月份行标题："2026年9月"
+  String _titleOf(DateTime m) => '${m.year}年${m.month}月';
+
+  /// 点选日期：切统计日；月历保持展开，便于连续跳看。
+  void _pickCalendarDay(DateTime d) => setState(() {
+        _day = d;
+      });
+
+  Widget _calendar(ThemeData theme) {
+    const weekHeads = ['一', '二', '三', '四', '五', '六', '日'];
+    final now = DateTime.now();
+    final store = EventStore.instance;
+
+    // 月 -> 当月有记录的日集合（周条跨月时最多缓存 2 个月）
+    final recCache = <String, Set<int>>{};
+    Set<int> recordedOf(DateTime d) => recCache.putIfAbsent(
+          '${d.year}-${d.month}',
+          () => store.recordedDaysOfMonth(DateTime(d.year, d.month, 1)),
+        );
+
+    final headRow = Row(
+      children: [
+        for (final h in weekHeads)
+          Expanded(
+            child: Center(
+              child: Text(
+                h,
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+              ),
+            ),
+          ),
+      ],
+    );
+
+    Widget dayCell(DateTime d) {
+      final sel = _sameDay(d, _day);
+      final isToday = _sameDay(d, now);
+      final hasRecord = recordedOf(d).contains(d.day);
+      final Widget face;
+      if (sel) {
+        face = Container(
+          width: 34,
+          height: 34,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: theme.colorScheme.primary,
+            shape: BoxShape.circle,
+          ),
+          child: Text(
+            '${d.day}',
+            style: theme.textTheme.bodyMedium
+                ?.copyWith(color: theme.colorScheme.onPrimary),
+          ),
+        );
+      } else {
+        face = Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '${d.day}',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: isToday
+                    ? theme.colorScheme.primary
+                    : theme.colorScheme.onSurface,
+                fontWeight: isToday ? FontWeight.w600 : null,
+              ),
+            ),
+            if (hasRecord) ...[
+              const SizedBox(height: 2),
+              Container(
+                width: 4,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.primary,
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ],
+          ],
+        );
+      }
+      return Expanded(
+        child: InkWell(
+          onTap: () => _pickCalendarDay(d),
+          child: SizedBox(height: 44, child: Center(child: face)),
+        ),
+      );
+    }
+
+    Widget emptyCell() => const Expanded(child: SizedBox.shrink());
+
+    final List<Widget> rows;
+    if (_calExpanded) {
+      final m = _calMonth;
+      final lead = DateTime(m.year, m.month, 1).weekday - 1;
+      final daysInMonth = DateTime(m.year, m.month + 1, 0).day;
+      final cells = <Widget>[
+        for (var i = 0; i < lead; i++) emptyCell(),
+        for (var day = 1; day <= daysInMonth; day++)
+          dayCell(DateTime(m.year, m.month, day)),
+      ];
+      while (cells.length % 7 != 0) {
+        cells.add(emptyCell());
+      }
+      rows = [
+        for (var i = 0; i < cells.length; i += 7)
+          Row(children: cells.sublist(i, i + 7)),
+      ];
+    } else {
+      final ws = _weekStart(_day);
+      rows = [
+        Row(
+          children: [
+            for (var i = 0; i < 7; i++) dayCell(ws.add(Duration(days: i))),
+          ],
+        ),
+      ];
+    }
+
+    // 月份行：月份 + 展开开关始终居中（Stack），切换状态时位置不变；
+    // 展开态 [<]/[>] 翻月箭头浮在两端。
+    final monthRow = SizedBox(
+      height: 40,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          InkWell(
+            onTap: _toggleCalendar,
+            borderRadius: BorderRadius.circular(20),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 4),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    _titleOf(_calExpanded ? _calMonth : _day),
+                    style: theme.textTheme.titleMedium,
+                  ),
+                  Icon(_calExpanded ? Icons.arrow_drop_up : Icons.arrow_drop_down),
+                ],
+              ),
+            ),
+          ),
+          if (_calExpanded) ...[
+            Positioned(
+              left: 0,
+              child: IconButton(
+                icon: const Icon(Icons.chevron_left),
+                tooltip: '上个月',
+                onPressed: () => _shiftCalMonth(-1),
+              ),
+            ),
+            Positioned(
+              right: 0,
+              child: IconButton(
+                icon: const Icon(Icons.chevron_right),
+                tooltip: '下个月',
+                onPressed: () => _shiftCalMonth(1),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        monthRow,
+        headRow,
+        ...rows,
+        const Divider(height: 20),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -92,6 +293,7 @@ class _StatsPageState extends State<StatsPage> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
+            _calendar(theme),
             Text(fmtDay(_day), style: theme.textTheme.titleMedium),
             const SizedBox(height: 4),
             Text(
@@ -127,30 +329,6 @@ class _StatsPageState extends State<StatsPage> {
                 isGap: true,
               ),
             ],
-            const SizedBox(height: 16),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                OutlinedButton(
-                  onPressed: () => setState(
-                    () => _day = DateTime(_day.year, _day.month, _day.day - 1),
-                  ),
-                  child: const Text('上一日'),
-                ),
-                TextButton(
-                  onPressed: _isToday
-                      ? null
-                      : () => setState(() => _day = DateTime.now()),
-                  child: const Text('今日'),
-                ),
-                OutlinedButton(
-                  onPressed: () => setState(
-                    () => _day = DateTime(_day.year, _day.month, _day.day + 1),
-                  ),
-                  child: const Text('下一日'),
-                ),
-              ],
-            ),
           ],
         ),
       ),

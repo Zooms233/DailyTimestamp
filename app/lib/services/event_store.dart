@@ -306,6 +306,26 @@ class EventStore extends ChangeNotifier {
     );
   }
 
+  /// 某月中有记录（当日已记录时长 > 0）的"日"集合，供月历圆点。
+  /// 与统计同口径：事件裁剪到当月区间；进行中事件截止到"现在"；跨天事件两侧日期都标记。
+  Set<int> recordedDaysOfMonth(DateTime month) {
+    final s0 = DateTime(month.year, month.month, 1).millisecondsSinceEpoch;
+    final s1 = DateTime(month.year, month.month + 1, 1).millisecondsSinceEpoch;
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final days = <int>{};
+    for (final e in _events) {
+      final es = max(e.startAt, s0);
+      final ee = min(e.endAt ?? nowMs, s1);
+      if (ee <= es) continue;
+      var d = DateTime.fromMillisecondsSinceEpoch(es);
+      while (d.millisecondsSinceEpoch < ee && d.month == month.month) {
+        days.add(d.day);
+        d = DateTime(d.year, d.month, d.day + 1);
+      }
+    }
+    return days;
+  }
+
   /// 与某一天有交集的事件，裁剪到日界。
   /// 返回 (事件, 裁剪后开始ms, 裁剪后结束ms, 当日是否进行中)。
   List<(TimestampEvent, int, int, bool)> eventsOfDay(DateTime day, {DateTime? now}) {
@@ -392,7 +412,35 @@ class EventStore extends ChangeNotifier {
     }
   }
 
+  /// 数据文件位置。
+  /// Android 存外部应用专属目录（/storage/emulated/0/Android/data/应用包名/files）：
+  /// 文件管理器可见，备份/恢复直接拷文件，不依赖 run-as/debug 包。
+  /// 首次运行自动从旧内部目录迁移；外部存储不可用时退回内部目录。
+  /// 其他平台仍用系统文档目录（Windows = 用户 Documents）。
   Future<File> _file() async {
+    if (Platform.isAndroid) {
+      final ext = await getExternalStorageDirectory();
+      if (ext != null) {
+        final f = File('${ext.path}${Platform.pathSeparator}events.json');
+        if (!await f.exists()) {
+          try {
+            final legacy = await _legacyFile();
+            if (await legacy.exists()) {
+              await legacy.copy(f.path);
+              await legacy.delete();
+            }
+          } catch (e) {
+            debugPrint('EventStore.migrate: $e');
+          }
+        }
+        return f;
+      }
+    }
+    return _legacyFile();
+  }
+
+  /// 旧位置：Android 内部私有目录（release 包下需 run-as）；其他平台的现行位置。
+  Future<File> _legacyFile() async {
     final dir = await getApplicationDocumentsDirectory();
     return File('${dir.path}${Platform.pathSeparator}events.json');
   }
