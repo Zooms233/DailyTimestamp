@@ -64,9 +64,14 @@ class _RootPageState extends State<RootPage> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: IndexedStack(
-        index: _index,
-        children: const [HomePage(), StatsPage()],
+      // 监听数据变更：打卡/合并/拆分/改分类等操作后两页立即刷新。
+      // children 不能用 const：相同实例会被框架短路，子树不会 rebuild。
+      body: ListenableBuilder(
+        listenable: EventStore.instance,
+        builder: (context, _) => IndexedStack(
+          index: _index,
+          children: [HomePage(), StatsPage()],
+        ),
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
