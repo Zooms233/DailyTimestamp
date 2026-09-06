@@ -1,12 +1,15 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'pages/home_page.dart';
 import 'pages/stats_page.dart';
 import 'services/event_store.dart';
+import 'services/storage_access.dart';
 
-Future<void> main() async {
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  await EventStore.instance.load();
   runApp(const TimestampApp());
 }
 
@@ -23,8 +26,105 @@ class TimestampApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF3E7BFA)),
         useMaterial3: true,
       ),
-      home: const RootPage(),
+      home: const AppGate(),
     );
+  }
+}
+
+/// 启动权限门：数据存公共 Documents/DailyTimestamp（卸载不清），
+/// Android 需"所有文件访问"授权；未授权时阻塞启动（去授权/退出），
+/// 不做其他路径回退。授权通过后才 load 数据进入主界面。
+class AppGate extends StatefulWidget {
+  const AppGate({super.key});
+
+  @override
+  State<AppGate> createState() => _AppGateState();
+}
+
+class _AppGateState extends State<AppGate> with WidgetsBindingObserver {
+  bool _checking = true; // 首次检测中
+  bool _granted = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _check();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // 从"所有文件访问"设置页返回时重检授权
+    if (state == AppLifecycleState.resumed && !_granted) _check();
+  }
+
+  Future<void> _check() async {
+    final ok = await StorageAccess.isGranted();
+    if (!mounted) return;
+    setState(() {
+      _granted = ok;
+      _checking = false;
+    });
+    if (ok) {
+      // 授权即进主界面，数据并行加载（完成时 notifyListeners 全局刷新）；
+      // load 内部容忍失败（空数据）。
+      unawaited(EventStore.instance.load());
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    if (_checking) {
+      // 授权检测中：静默过场（探测文件读写，毫秒级）
+      return const Scaffold(
+          body: Center(child: CircularProgressIndicator()));
+    }
+    if (!_granted) {
+      return Scaffold(
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.folder_shared_outlined,
+                    size: 48, color: theme.colorScheme.primary),
+                const SizedBox(height: 16),
+                Text('需要"所有文件访问"权限',
+                    style: theme.textTheme.titleMedium),
+                const SizedBox(height: 8),
+                Text(
+                  '数据保存在公共文档目录 Documents/DailyTimestamp，'
+                  '卸载/重装后不丢失；请在系统设置中允许访问所有文件。',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant),
+                ),
+                const SizedBox(height: 24),
+                FilledButton.icon(
+                  onPressed: () => StorageAccess.openManageSettings(),
+                  icon: const Icon(Icons.settings_outlined),
+                  label: const Text('去授权'),
+                ),
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: () => SystemNavigator.pop(),
+                  child: const Text('退出应用'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+    return const RootPage();
   }
 }
 

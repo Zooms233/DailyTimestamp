@@ -12,12 +12,15 @@ import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../models/timestamp_event.dart';
+import 'backup_service.dart';
+import 'storage_access.dart';
 
 /// 后台 isolate 解析整份 JSON（compute 入口须为顶层函数）。
-/// 返回 (事件, 分类, 旧版自定义分类, 分类色)。
-(List<TimestampEvent>, List<String>, List<String>, Map<String, int>)
+/// 返回 (事件, 分类, 旧版自定义分类, 分类色, 自动存档开关)。
+(List<TimestampEvent>, List<String>, List<String>, Map<String, int>, bool)
     _parseFile(String raw) {
   final data = jsonDecode(raw) as Map<String, dynamic>;
+  final settings = data['settings'] as Map<String, dynamic>?;
   return (
     (data['events'] as List? ?? [])
         .map((e) => TimestampEvent.fromJson(e as Map<String, dynamic>))
@@ -26,6 +29,7 @@ import '../models/timestamp_event.dart';
     (data['customLabels'] as List? ?? []).cast<String>().toList(),
     (data['colors'] as Map? ?? {})
         .map((k, v) => MapEntry(k as String, v as int)),
+    settings?['autoBackup'] as bool? ?? true,
   );
 }
 
@@ -77,6 +81,18 @@ class EventStore extends ChangeNotifier {
   bool get loaded => _loaded;
   bool _loaded = false;
 
+  /// 自动存档开关（设置页控制；默认开，每次记录新事件时触发）。
+  bool get autoBackup => _autoBackup;
+  bool _autoBackup = true;
+
+  /// 用户改自动存档开关（持久化到 settings 字段）。
+  void setAutoBackup(bool v) {
+    if (_autoBackup == v) return;
+    _autoBackup = v;
+    notifyListeners();
+    _save();
+  }
+
   List<TimestampEvent> get events => List.unmodifiable(_events);
 
   /// 有序分类（顺序即打卡弹窗显示顺序）。
@@ -96,7 +112,7 @@ class EventStore extends ChangeNotifier {
       final file = await _file();
       if (await file.exists()) {
         // 万级事件 JSON 解析放后台 isolate，主线程不卡首帧
-        final (events, labels, legacy, colors) =
+        final (events, labels, legacy, colors, autoBackup) =
             await compute(_parseFile, await file.readAsString());
         _events
           ..clear()
@@ -117,6 +133,7 @@ class EventStore extends ChangeNotifier {
         _labelColors
           ..clear()
           ..addAll(colors);
+        _autoBackup = autoBackup;
       } else {
         _labels
           ..clear()
@@ -148,6 +165,8 @@ class EventStore extends ChangeNotifier {
     ));
     notifyListeners();
     _save();
+    // 自动存档：每日一份备份到公共下载目录（内部 ≥1h 节流、静默失败，不阻塞打卡）
+    unawaited(BackupService.autoBackup(enabled: _autoBackup, json: encode()));
   }
 
   // ---------- 分类管理 ----------
@@ -212,19 +231,19 @@ class EventStore extends ChangeNotifier {
 
   // ---------- 事件修正（防误触） ----------
 
-  /// 修改事件类别；成功返回 true。
-  bool editLabel(String id, String newLabel) {
-    final text = newLabel.trim();
+  /// 修改事件类别与备注（备注空串/null 清空备注）；成功返回 true。
+  bool editEvent(String id, {required String label, String? note}) {
+    final text = label.trim();
     if (text.isEmpty) return false;
-    for (final e in _events) {
-      if (e.id == id) {
-        e.label = text;
-        notifyListeners();
-        _save();
-        return true;
-      }
-    }
-    return false;
+    final i = _events.indexWhere((e) => e.id == id);
+    if (i < 0) return false;
+    final e = _events[i];
+    e.label = text;
+    final n = note?.trim();
+    e.note = (n == null || n.isEmpty) ? null : n;
+    notifyListeners();
+    _save();
+    return true;
   }
 
   /// 全局时间线上 startAt 相邻的上一条；无则 null。
@@ -327,14 +346,15 @@ class EventStore extends ChangeNotifier {
   }
 
   /// 与某一天有交集的事件，裁剪到日界。
-  /// 返回 (事件, 裁剪后开始ms, 裁剪后结束ms, 当日是否进行中)。
-  List<(TimestampEvent, int, int, bool)> eventsOfDay(DateTime day, {DateTime? now}) {
+  /// 返回 (事件, 裁剪后开始ms, 裁剪后结束ms, 当日是否进行中,
+  ///       是否开始于日界前(标「昨」), 是否结束于日界后(标「明」))。
+  List<(TimestampEvent, int, int, bool, bool, bool)> eventsOfDay(DateTime day, {DateTime? now}) {
     final t = now ?? DateTime.now();
     final dayStart = DateTime(day.year, day.month, day.day);
     final dayEnd = dayStart.add(const Duration(days: 1));
     final s0 = dayStart.millisecondsSinceEpoch;
     final s1 = dayEnd.millisecondsSinceEpoch;
-    final result = <(TimestampEvent, int, int, bool)>[];
+    final result = <(TimestampEvent, int, int, bool, bool, bool)>[];
     for (final e in _events) {
       final rawEnd = e.endAt;
       final ongoingInDay = rawEnd == null;
@@ -342,7 +362,14 @@ class EventStore extends ChangeNotifier {
       final es = max(e.startAt, s0);
       final end = min(ee, s1);
       if (end <= es) continue;
-      result.add((e, es, end, ongoingInDay));
+      result.add((
+        e,
+        es,
+        end,
+        ongoingInDay,
+        e.startAt < s0,
+        rawEnd != null && rawEnd > s1,
+      ));
     }
     result.sort((a, b) => a.$2.compareTo(b.$2));
     return result;
@@ -350,10 +377,11 @@ class EventStore extends ChangeNotifier {
 
   // ---------- 持久化 ----------
 
-  /// 当前全量数据的 JSON 文本（写盘与导出共用）。
-  String _encode() => jsonEncode({
+  /// 当前全量数据的 JSON 文本（写盘、导出与自动存档共用）。
+  String encode() => jsonEncode({
         'labels': _labels,
         'colors': _labelColors,
+        'settings': {'autoBackup': _autoBackup},
         'events': _events.map((e) => e.toJson()).toList(),
       });
 
@@ -364,7 +392,7 @@ class EventStore extends ChangeNotifier {
     String p2(int v) => v.toString().padLeft(2, '0');
     final file =
         File('${dir.path}/events_${n.year}${p2(n.month)}${p2(n.day)}_${p2(n.hour)}${p2(n.minute)}.json');
-    await file.writeAsString(_encode());
+    await file.writeAsString(encode());
     return file;
   }
 
@@ -391,7 +419,7 @@ class EventStore extends ChangeNotifier {
     try {
       final file = await _file();
       final tmp = File('${file.path}.tmp');
-      await tmp.writeAsString(_encode());
+      await tmp.writeAsString(encode());
       try {
         await tmp.rename(file.path);
       } catch (_) {
@@ -412,36 +440,11 @@ class EventStore extends ChangeNotifier {
     }
   }
 
-  /// 数据文件位置。
-  /// Android 存外部应用专属目录（/storage/emulated/0/Android/data/应用包名/files）：
-  /// 文件管理器可见，备份/恢复直接拷文件，不依赖 run-as/debug 包。
-  /// 首次运行自动从旧内部目录迁移；外部存储不可用时退回内部目录。
-  /// 其他平台仍用系统文档目录（Windows = 用户 Documents）。
+  /// 数据文件位置：`Documents/DailyTimestamp/events.json`（需"所有文件访问"授权）。
+  /// Android = /storage/emulated/0/Documents/DailyTimestamp；桌面 = 文档目录/DailyTimestamp。
+  /// 与自动备份同目录；未授权时启动被权限页阻塞，不做其他路径回退。
   Future<File> _file() async {
-    if (Platform.isAndroid) {
-      final ext = await getExternalStorageDirectory();
-      if (ext != null) {
-        final f = File('${ext.path}${Platform.pathSeparator}events.json');
-        if (!await f.exists()) {
-          try {
-            final legacy = await _legacyFile();
-            if (await legacy.exists()) {
-              await legacy.copy(f.path);
-              await legacy.delete();
-            }
-          } catch (e) {
-            debugPrint('EventStore.migrate: $e');
-          }
-        }
-        return f;
-      }
-    }
-    return _legacyFile();
-  }
-
-  /// 旧位置：Android 内部私有目录（release 包下需 run-as）；其他平台的现行位置。
-  Future<File> _legacyFile() async {
-    final dir = await getApplicationDocumentsDirectory();
+    final dir = await StorageAccess.root();
     return File('${dir.path}${Platform.pathSeparator}events.json');
   }
 }

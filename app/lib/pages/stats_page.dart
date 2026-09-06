@@ -10,6 +10,8 @@ import 'package:share_plus/share_plus.dart';
 
 import '../services/event_store.dart';
 import '../utils/format.dart';
+import '../widgets/backup_settings_sheet.dart';
+import '../widgets/timeline_row.dart';
 
 class StatsPage extends StatefulWidget {
   const StatsPage({super.key});
@@ -27,6 +29,9 @@ class StatsPageState extends State<StatsPage> {
 
   /// 月历展开时浏览的月份（仅日历显示，与统计日独立；收起时忽略）
   DateTime _calMonth = DateTime.now();
+
+  /// 日期区视图模式：false = 占比条形，true = 当日时间线（点日期标题切换）
+  bool _showTimeline = false;
 
   /// 从打卡页切回统计 Tab 时调用：重置为今日并收起月历。
   void resetToToday() => setState(() {
@@ -282,6 +287,12 @@ class StatsPageState extends State<StatsPage> {
       appBar: AppBar(
         title: const Text('统计'),
         actions: [
+          // 自动存档设置（导出左边）
+          IconButton(
+            icon: const Icon(Icons.settings_outlined),
+            tooltip: '自动存档设置',
+            onPressed: () => showBackupSettingsSheet(context),
+          ),
           IconButton(
             icon: const Icon(Icons.file_upload_outlined),
             tooltip: '导出数据',
@@ -294,16 +305,58 @@ class StatsPageState extends State<StatsPage> {
           padding: const EdgeInsets.all(16),
           children: [
             _calendar(theme),
-            Text(fmtDay(_day), style: theme.textTheme.titleMedium),
-            const SizedBox(height: 4),
-            Text(
-              '已记录 ${fmtHm(stat.recorded.inMinutes)} · 未记录 ${fmtHm(stat.unrecorded.inMinutes)}',
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
+            // 日期标题 + 记录摘要：点击在占比条形 ↔ 当日时间线之间切换
+            InkWell(
+              onTap: () => setState(() => _showTimeline = !_showTimeline),
+              borderRadius: BorderRadius.circular(8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(fmtDay(_day), style: theme.textTheme.titleMedium),
+                        const SizedBox(height: 4),
+                        Text(
+                          '已记录 ${fmtHm(stat.recorded.inMinutes)} · 未记录 ${fmtHm(stat.unrecorded.inMinutes)}',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    icon: Icon(_showTimeline ? Icons.bar_chart : Icons.timeline),
+                    tooltip: _showTimeline ? '切换为占比条形' : '切换为时间线',
+                    onPressed: () => setState(() => _showTimeline = !_showTimeline),
+                  ),
+                ],
               ),
             ),
             const SizedBox(height: 16),
-            if (stat.recorded == Duration.zero &&
+            if (_showTimeline) ...[
+              // 当日时间线：行样式与打卡页一致（只读，不可点）；跨天标「昨/明」
+              ...store.eventsOfDay(_day).map((t) => TimelineRow(
+                    event: t.$1,
+                    clippedStart: t.$2,
+                    clippedEnd: t.$3,
+                    ongoing: t.$4,
+                    startsBeforeDay: t.$5,
+                    endsAfterDay: t.$6,
+                  )),
+              if (store.eventsOfDay(_day).isEmpty)
+                Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Text(
+                    '这一天没有记录',
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.outline,
+                    ),
+                  ),
+                ),
+            ] else if (stat.recorded == Duration.zero &&
                 stat.unrecorded == const Duration(hours: 24))
               Padding(
                 padding: const EdgeInsets.all(24),

@@ -11,6 +11,7 @@ import 'labels_page.dart';
 import '../services/event_store.dart';
 import '../utils/format.dart';
 import '../widgets/punch_sheet.dart';
+import '../widgets/timeline_row.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -21,6 +22,20 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   Timer? _timer;
+
+  /// 正在查看的日期（默认今日；AppBar [<]/[>] 切换，用于回看/修改邻近日期）
+  DateTime _viewDay = DateTime.now();
+
+  static bool _sameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
+
+  /// 切换查看日：delta = -1 上一日 / +1 下一日；不能晚于今日。
+  void _shiftDay(int delta) => setState(() {
+        final today = DateTime.now();
+        final d = DateTime(_viewDay.year, _viewDay.month, _viewDay.day + delta);
+        if (d.isAfter(DateTime(today.year, today.month, today.day))) return;
+        _viewDay = d;
+      });
 
   @override
   void initState() {
@@ -42,11 +57,32 @@ class _HomePageState extends State<HomePage> {
     final store = EventStore.instance;
     final theme = Theme.of(context);
     final now = DateTime.now();
+    final isToday = _sameDay(_viewDay, now);
     final ongoing = store.ongoing;
-    final today = store.eventsOfDay(now);
+    final today = store.eventsOfDay(_viewDay, now: now);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('时间戳记录'),
+        // 日期切换器：[<] 上一日 / [>] 下一日（今日时禁用，用于回看后返回）
+        centerTitle: true,
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: const Icon(Icons.chevron_left),
+              tooltip: '上一日',
+              onPressed: () => _shiftDay(-1),
+            ),
+            Text(
+              isToday ? '今日' : fmtDay(_viewDay),
+              style: theme.textTheme.titleMedium,
+            ),
+            IconButton(
+              icon: const Icon(Icons.chevron_right),
+              tooltip: isToday ? '已是今日' : '下一日（返回）',
+              onPressed: isToday ? null : () => _shiftDay(1),
+            ),
+          ],
+        ),
         actions: [
           // 分类管理入口（右上角）
           IconButton(
@@ -66,26 +102,31 @@ class _HomePageState extends State<HomePage> {
             child: ListView(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
               children: [
-                Text('今日时间轴（${today.length} 个事件）',
-                    style: theme.textTheme.titleSmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant)),
+                Text(
+                  '${isToday ? '今日时间轴' : fmtDay(_viewDay)}（${today.length} 个事件）',
+                  style: theme.textTheme.titleSmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant)),
                 const SizedBox(height: 8),
                 if (today.isEmpty)
                   Padding(
                     padding: const EdgeInsets.all(24),
                     child: Text(
-                      '今日还没有记录，从下方按钮开始第一个事件',
+                      isToday
+                          ? '今日还没有记录，从下方按钮开始第一个事件'
+                          : '这一天没有记录',
                       textAlign: TextAlign.center,
                       style: theme.textTheme.bodyMedium
                           ?.copyWith(color: theme.colorScheme.outline),
                     ),
                   )
                 else
-                  ...today.map((t) => _TimelineRow(
+                  ...today.map((t) => TimelineRow(
                         event: t.$1,
                         clippedStart: t.$2,
                         clippedEnd: t.$3,
                         ongoing: t.$4,
+                        startsBeforeDay: t.$5,
+                        endsAfterDay: t.$6,
                         onTap: () => _showRowActions(context, t.$1),
                       )),
               ],
@@ -116,7 +157,7 @@ class _HomePageState extends State<HomePage> {
       ),
     );
   }
-  /// 时间轴行点击：修改类别 / 与上一个合并（防误触修正手段）。
+  /// 时间轴行点击：修改事件（类别+备注）/ 与上一个合并（防误触修正手段）。
   Future<void> _showRowActions(BuildContext context, TimestampEvent event) async {
     final store = EventStore.instance;
     final theme = Theme.of(context);
@@ -142,7 +183,7 @@ class _HomePageState extends State<HomePage> {
               ),
               ListTile(
                 leading: const Icon(Icons.edit_outlined),
-                title: const Text('修改类别'),
+                title: const Text('修改事件'),
                 onTap: () => Navigator.of(ctx).pop('edit'),
               ),
               ListTile(
@@ -162,14 +203,8 @@ class _HomePageState extends State<HomePage> {
     );
     if (action == null || !context.mounted) return;
     if (action == 'edit') {
-      final newLabel = await showLabelPicker(context, current: event.label);
-      if (newLabel == null || !context.mounted) return;
-      if (store.editLabel(event.id, newLabel)) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('已修改为「$newLabel」'),
-          duration: const Duration(milliseconds: 1500),
-        ));
-      }
+      // 复用打卡弹窗：预填当前类别/备注，点标签即时保存
+      await showEditEventSheet(context, event);
     } else if (action == 'merge') {
       final prev = store.previousOf(event.id);
       if (prev == null) {
@@ -364,50 +399,30 @@ class _HomePageState extends State<HomePage> {
     if (atMs == null || !context.mounted) return;
     if (store.splitEvent(event.id, atMs)) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('已拆分为两段，可分别修改类别'),
+        content: Text('已拆分为两段，可分别修改事件'),
         duration: Duration(milliseconds: 1500),
       ));
     }
   }
 
-  /// 类别选择弹窗；返回选中的类别，取消返回 null。
-  Future<String?> showLabelPicker(BuildContext context, {required String current}) {
-    return showModalBottomSheet<String>(
-      context: context,
-      showDragHandle: true,
-      builder: (ctx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text('修改类别', style: Theme.of(ctx).textTheme.titleLarge),
-              const SizedBox(height: 16),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  for (final label in EventStore.instance.labels)
-                    FilterChip(
-                      label: Text(label),
-                      selected: label == current,
-                      onSelected: (_) => Navigator.of(ctx).pop(label),
-                    ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 class _OngoingCard extends StatelessWidget {
   const _OngoingCard({required this.ongoing});
 
   final TimestampEvent? ongoing;
+
+  /// 开始时刻文本：当日 HH:MM；昨日「昨HH:MM」；更早「MM-DD HH:MM」（跨多天进行中）。
+  String _startText(int ms, DateTime now) {
+    final t = DateTime.fromMillisecondsSinceEpoch(ms);
+    final today = DateTime(now.year, now.month, now.day);
+    if (!t.isBefore(today)) return fmtClock(ms);
+    final yesterday = today.subtract(const Duration(days: 1));
+    if (!t.isBefore(yesterday)) return '昨${fmtClock(ms)}';
+    final mm = t.month.toString().padLeft(2, '0');
+    final dd = t.day.toString().padLeft(2, '0');
+    return '$mm-$dd ${fmtClock(ms)}';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -470,95 +485,11 @@ class _OngoingCard extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              '开始于 ${fmtClock(e.startAt)}，已持续 ${fmtZh(mins)}',
+              '开始于 ${_startText(e.startAt, now)}，已持续 ${fmtZh(mins)}',
               style: theme.textTheme.bodyMedium,
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _TimelineRow extends StatelessWidget {
-  const _TimelineRow({
-    required this.event,
-    required this.clippedStart,
-    required this.clippedEnd,
-    required this.ongoing,
-    required this.onTap,
-  });
-
-  final TimestampEvent event;
-  final int clippedStart;
-  final int clippedEnd;
-  final bool ongoing;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final mins = Duration(milliseconds: clippedEnd - clippedStart).inMinutes;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 2),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color: ongoing ? theme.colorScheme.secondaryContainer : null,
-          borderRadius: BorderRadius.circular(8),
-        ),
-      child: Row(
-        children: [
-          // 分类色条
-          Container(
-            width: 4,
-            height: 24,
-            margin: const EdgeInsets.only(right: 10),
-            decoration: BoxDecoration(
-              color: EventStore.instance.colorOf(event.label),
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-          Text(
-            '${fmtClock(clippedStart)}-${ongoing ? '现在' : fmtClock(clippedEnd)}',
-            style: theme.textTheme.bodyMedium
-                ?.copyWith(fontFamily: 'monospace', color: theme.colorScheme.onSurfaceVariant),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text.rich(
-              TextSpan(
-                text: event.label,
-                style: theme.textTheme.bodyMedium,
-                children: [
-                  if (event.note case final note? when note.isNotEmpty)
-                    TextSpan(
-                      text: '  $note',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                ],
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          if (ongoing)
-            Padding(
-              padding: const EdgeInsets.only(right: 4),
-              child: Icon(Icons.play_arrow, size: 16, color: theme.colorScheme.primary),
-            ),
-          Text(
-            ongoing ? '进行中' : fmtZh(mins),
-            style: theme.textTheme.bodyMedium?.copyWith(
-              fontWeight: ongoing ? FontWeight.bold : FontWeight.normal,
-            ),
-          ),
-        ],
-      ),
       ),
     );
   }
