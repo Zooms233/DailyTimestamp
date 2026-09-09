@@ -1,9 +1,8 @@
-/// 打卡页（设计文档 3.1）：进行中卡片 + 大按钮 + 今日时间轴。
+/// 打卡页：今日时间轴（主视区）+ 底部固定的进行中卡片与打卡按钮。
 library;
 
 import 'dart:async';
 
-import 'package:flutter/cupertino.dart' show CupertinoPicker, FixedExtentScrollController;
 import 'package:flutter/material.dart';
 
 import '../models/timestamp_event.dart';
@@ -11,6 +10,7 @@ import 'labels_page.dart';
 import '../services/event_store.dart';
 import '../utils/format.dart';
 import '../widgets/punch_sheet.dart';
+import '../widgets/time_offset_picker.dart';
 import '../widgets/timeline_row.dart';
 
 class HomePage extends StatefulWidget {
@@ -244,8 +244,7 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  /// 拆分流程：双滚轮（时/分）在事件时段内选拆分时刻。
-  /// 滚轮列表按事件范围生成（物理限界）；最后边界小时分钟收敛到剩余上限。
+  /// 拆分流程：双滚轮（时/分）在事件时段内选拆分时刻，滚轮联动见 TimeOffsetPicker。
   Future<void> _showSplitDialog(BuildContext context, TimestampEvent event) async {
     final store = EventStore.instance;
     final startMs = event.startAt;
@@ -258,142 +257,51 @@ class _HomePageState extends State<HomePage> {
       ));
       return;
     }
-    final maxH = maxTotalMin ~/ 60;
-    final maxM = maxTotalMin % 60;
-    final startMin =
-        DateTime.fromMillisecondsSinceEpoch(startMs).minute; // 分钟显示映射基准
-    final mid = maxTotalMin ~/ 2;
-    var h = mid ~/ 60;
-    var m = mid % 60;
+    var offset = maxTotalMin ~/ 2;
     final theme = Theme.of(context);
-    // 视觉索引：顶部=大值（上大下小）；history 索引 ↔ 偏移分钟 m = 59 - 索引
-    final hController =
-        FixedExtentScrollController(initialItem: maxH - h);
-    final mController =
-        FixedExtentScrollController(initialItem: 59 - m);
     final atMs = await showModalBottomSheet<int>(
       context: context,
       showDragHandle: true,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setSheetState) {
-          // 级联限制：末小时分钟不得超过剩余上限；最小拆分 += 1 分钟（钳制）
-          final mMax = (h == maxH) ? maxM : 59;
-          final eM = m > mMax ? mMax : m;
-          final offset = (h * 60 + eM).clamp(1, maxTotalMin);
-          return SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text('拆分「${event.label}」',
-                      style: theme.textTheme.titleLarge),
-                  const SizedBox(height: 4),
-                  Text(
-                    '范围 ${fmtClock(startMs)} ~ ${fmtClock(upper)}',
-                    style: theme.textTheme.bodySmall
-                        ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+        builder: (ctx, setSheetState) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text('拆分「${event.label}」',
+                    style: theme.textTheme.titleLarge),
+                const SizedBox(height: 4),
+                Text(
+                  '范围 ${fmtClock(startMs)} ~ ${fmtClock(upper)}',
+                  style: theme.textTheme.bodySmall
+                      ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                ),
+                TimeOffsetPicker(
+                  startMs: startMs,
+                  endMs: upper,
+                  initialOffset: offset,
+                  onChanged: (v) => setSheetState(() => offset = v),
+                ),
+                Center(
+                  child: Text(
+                    fmtClock(startMs + offset * 60000),
+                    style: theme.textTheme.titleMedium
+                        ?.copyWith(fontWeight: FontWeight.bold),
                   ),
-                  SizedBox(
-                    height: 160,
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: CupertinoPicker(
-                            scrollController: hController,
-                            itemExtent: 40,
-                            onSelectedItemChanged: (i) =>
-                                setSheetState(() => h = maxH - i),
-                            children: [
-                              for (var i = 0; i <= maxH; i++)
-                                Center(
-                                  child: Text(
-                                    '${fmtClock(startMs + (maxH - i) * 60000).split(':')[0]} 时',
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ),
-                        Expanded(
-                          child: CupertinoPicker(
-                            scrollController: mController,
-                            itemExtent: 40,
-                            looping: true,
-                            onSelectedItemChanged: (i) =>
-                                setSheetState(() {
-                              // 视觉索引 → 偏移分钟（顶部=大值）
-                              final mNew = 59 - i;
-                              final diff = (mNew - m + 60) % 60;
-                              if (diff <= 30) {
-                                // 上滑（偏移增大）
-                                if (mNew < m) {
-                                  // 跨 59→00 边界 → 下一小时
-                                  if (h < maxH) {
-                                    h++;
-                                    m = mNew;
-                                    hController.jumpToItem(maxH - h);
-                                  } else {
-                                    mController.jumpToItem(59 - m); // 事件终点，弹回
-                                    return;
-                                  }
-                                } else {
-                                  m = mNew;
-                                }
-                              } else {
-                                // 下滑（偏移减小）
-                                if (mNew > m) {
-                                  // 跨 00→59 边界 → 上一小时
-                                  if (h > 0) {
-                                    h--;
-                                    m = mNew;
-                                    hController.jumpToItem(maxH - h);
-                                  } else {
-                                    mController.jumpToItem(59 - m); // 事件起始，弹回
-                                    return;
-                                  }
-                                } else {
-                                  m = mNew;
-                                }
-                              }
-                              // 末小时分钟上限收敛
-                              if (h == maxH && m > maxM) {
-                                m = maxM;
-                                mController.jumpToItem(59 - maxM);
-                              }
-                            }),
-                            children: [
-                              for (var i = 0; i <= 59; i++)
-                                Center(
-                                  child: Text(
-                                    '${(startMin + 59 - i) % 60} 分',
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Center(
-                    child: Text(
-                      fmtClock(startMs + offset * 60000),
-                      style: theme.textTheme.titleMedium
-                          ?.copyWith(fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  FilledButton(
-                    onPressed: () => Navigator.of(ctx)
-                        .pop(startMs + offset * 60000),
-                    child:
-                        Text('在 ${fmtClock(startMs + offset * 60000)} 拆分'),
-                  ),
-                ],
-              ),
+                ),
+                const SizedBox(height: 12),
+                FilledButton(
+                  onPressed: () => Navigator.of(ctx)
+                      .pop(startMs + offset * 60000),
+                  child:
+                      Text('在 ${fmtClock(startMs + offset * 60000)} 拆分'),
+                ),
+              ],
             ),
-          );
-        },
+          ),
+        ),
       ),
     );
     if (atMs == null || !context.mounted) return;
