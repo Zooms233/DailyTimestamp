@@ -1,4 +1,4 @@
-/// 自动存档（doc/pages.md 3.4）：每日备份，防数据文件被误删/损坏。
+/// 自动存档：每日备份一份快照，防数据文件被误删/损坏。
 /// - 位置：`Documents/DailyTimestamp/`（与主数据 events.json 同目录；Android 为
 ///   公共 Documents，卸载不清；需"所有文件访问"授权，见 storage_access.dart）。
 /// - 命名：`DailyTimestamp_backup_YYYYMMDD.json`，每日一份，当天内覆盖。

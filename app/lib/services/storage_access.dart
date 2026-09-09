@@ -1,4 +1,4 @@
-/// 应用数据的公共存储位置与权限门（doc/design.md 存储节、doc/backup.md）。
+/// 应用数据的公共存储位置与"所有文件访问"权限。
 /// Android 数据与备份统一存 `/storage/emulated/0/Documents/DailyTimestamp/`
 /// （公共 Documents，卸载不清、文件管理器可见）；写入需"所有文件访问"
 /// （MANAGE_EXTERNAL_STORAGE）授权，未授权时启动被权限页阻塞（去授权/退出），

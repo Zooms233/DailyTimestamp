@@ -1,5 +1,5 @@
 /// 时间轴行（打卡页/统计页共用）：`开始-结束 分类色条 标签 备注 时长`，
-/// 进行中显示 `▶ 进行中`。设计见 doc/pages.md 第 1 节。
+/// 进行中显示 `▶ 进行中`。
 library;
 
 import 'package:flutter/material.dart';
