@@ -86,6 +86,16 @@ class _PunchSheetState extends State<PunchSheet> {
                 style: theme.textTheme.titleLarge,
               ),
               const SizedBox(height: 16),
+              TextField(
+                controller: _noteController,
+                decoration: const InputDecoration(
+                  hintText: '备注',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+                textInputAction: TextInputAction.done,
+              ),
+              const SizedBox(height: 16),
               Wrap(
                 spacing: 8,
                 runSpacing: 8,
@@ -119,16 +129,6 @@ class _PunchSheetState extends State<PunchSheet> {
                       },
                     ),
                 ],
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _noteController,
-                decoration: const InputDecoration(
-                  hintText: '备注',
-                  border: OutlineInputBorder(),
-                  isDense: true,
-                ),
-                textInputAction: TextInputAction.done,
               ),
             ],
           ),
