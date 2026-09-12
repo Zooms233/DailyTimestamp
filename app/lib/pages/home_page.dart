@@ -258,6 +258,12 @@ class _HomePageState extends State<HomePage> {
       return;
     }
     var offset = maxTotalMin ~/ 2;
+    // 跨天事件：范围/选中时刻带日期显示（MM-DD HH:mm），避免 "23:00 ~ 02:00" 歧义
+    final st = DateTime.fromMillisecondsSinceEpoch(startMs);
+    final ut = DateTime.fromMillisecondsSinceEpoch(upper);
+    final crossDay =
+        st.year != ut.year || st.month != ut.month || st.day != ut.day;
+    String fmt(int ms) => crossDay ? fmtClockDay(ms) : fmtClock(ms);
     final theme = Theme.of(context);
     final atMs = await showModalBottomSheet<int>(
       context: context,
@@ -274,7 +280,7 @@ class _HomePageState extends State<HomePage> {
                     style: theme.textTheme.titleLarge),
                 const SizedBox(height: 4),
                 Text(
-                  '范围 ${fmtClock(startMs)} ~ ${fmtClock(upper)}',
+                  '范围 ${fmt(startMs)} ~ ${fmt(upper)}',
                   style: theme.textTheme.bodySmall
                       ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
                 ),
@@ -286,7 +292,7 @@ class _HomePageState extends State<HomePage> {
                 ),
                 Center(
                   child: Text(
-                    fmtClock(startMs + offset * 60000),
+                    fmt(startMs + offset * 60000),
                     style: theme.textTheme.titleMedium
                         ?.copyWith(fontWeight: FontWeight.bold),
                   ),
@@ -295,8 +301,7 @@ class _HomePageState extends State<HomePage> {
                 FilledButton(
                   onPressed: () => Navigator.of(ctx)
                       .pop(startMs + offset * 60000),
-                  child:
-                      Text('在 ${fmtClock(startMs + offset * 60000)} 拆分'),
+                  child: Text('在 ${fmt(startMs + offset * 60000)} 拆分'),
                 ),
               ],
             ),

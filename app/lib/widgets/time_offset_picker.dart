@@ -57,11 +57,15 @@ class _TimeOffsetPickerState extends State<TimeOffsetPicker> {
 
   int get _atMs => widget.startMs + k * _minMs;
 
-  /// 某时刻的绝对小时（本地时区，从当日 0 点计）。
+  /// 某时刻的绝对小时（本地时区，从事件开始当日 0 点计，跨天递增不取模）。
+  /// 例：事件开始于昨天 23:00，则今天 01:00 的绝对小时 = 25。
   int _hourOf(int ms) {
     final t = DateTime.fromMillisecondsSinceEpoch(ms);
+    final s = DateTime.fromMillisecondsSinceEpoch(widget.startMs);
+    final startDay = DateTime(s.year, s.month, s.day);
     final day = DateTime(t.year, t.month, t.day);
-    return (ms - day.millisecondsSinceEpoch) ~/ _hourMs;
+    return day.difference(startDay).inDays * 24 +
+        (ms - day.millisecondsSinceEpoch) ~/ _hourMs;
   }
 
   List<int> _buildHours() {
@@ -112,12 +116,13 @@ class _TimeOffsetPickerState extends State<TimeOffsetPicker> {
   }
 
   /// 小时滚轮：目标小时（分钟保持）→ 直接换算偏移，越界截断到边界。
+  /// 绝对小时从事件开始当日 0 点计，目标时刻基准同样取事件开始当日 0 点（跨天正确）。
   void _onHour(int i) {
     final hNew = _hours[_hours.length - 1 - i];
     if (hNew == _hourOf(_atMs)) return; // jumpToItem 回声
-    final t = DateTime.fromMillisecondsSinceEpoch(_atMs);
-    final day = DateTime(t.year, t.month, t.day);
-    final targetMs = day.millisecondsSinceEpoch + hNew * _hourMs;
+    final s = DateTime.fromMillisecondsSinceEpoch(widget.startMs);
+    final startDay = DateTime(s.year, s.month, s.day);
+    final targetMs = startDay.millisecondsSinceEpoch + hNew * _hourMs;
     k = ((targetMs - widget.startMs) ~/ _minMs).clamp(1, maxK);
     _mCtrl.jumpToItem(_mIndex); // 截断可能改变分钟，同步分钟滚轮
     _emit();

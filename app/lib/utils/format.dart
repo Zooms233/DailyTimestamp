@@ -7,6 +7,14 @@ String fmtClock(int ms) {
   return '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
 }
 
+/// 毫秒 epoch -> "MM-DD HH:mm"（跨天事件展示拆分时刻时用，带日期避免歧义）。
+String fmtClockDay(int ms) {
+  final t = DateTime.fromMillisecondsSinceEpoch(ms);
+  final mm = t.month.toString().padLeft(2, '0');
+  final dd = t.day.toString().padLeft(2, '0');
+  return '$mm-$dd ${fmtClock(ms)}';
+}
+
 /// 分钟数 -> "1 小时 24 分" / "24 分" / "1 小时"。
 String fmtZh(int minutes) {
   final h = minutes ~/ 60;
