@@ -13,6 +13,8 @@ void showPunchSheet(BuildContext context) {
   showModalBottomSheet<void>(
     context: context,
     showDragHandle: true,
+    // 解除 62.5% 屏幕高限制，允许 sheet 随键盘抬升（配合内部 viewInsets 边距）
+    isScrollControlled: true,
     builder: (_) => const PunchSheet(),
   );
 }
@@ -22,6 +24,7 @@ Future<void> showEditEventSheet(BuildContext context, TimestampEvent event) {
   return showModalBottomSheet<void>(
     context: context,
     showDragHandle: true,
+    isScrollControlled: true, // 同 showPunchSheet：避免键盘遮挡备注
     builder: (_) => PunchSheet.edit(event),
   );
 }
@@ -40,8 +43,9 @@ class PunchSheet extends StatefulWidget {
 }
 
 class _PunchSheetState extends State<PunchSheet> {
-  late final TextEditingController _noteController =
-      TextEditingController(text: widget.event?.note);
+  late final TextEditingController _noteController = TextEditingController(
+    text: widget.event?.note,
+  );
 
   @override
   void dispose() {
@@ -66,64 +70,68 @@ class _PunchSheetState extends State<PunchSheet> {
     final theme = Theme.of(context);
     final labels = EventStore.instance.labels; // 有序分类
     final editing = widget.event;
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              editing == null ? '现在在做什么？' : '当时在做什么？',
-              style: theme.textTheme.titleLarge,
-            ),
-            const SizedBox(height: 16),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (final label in labels)
-                  Builder(
-                    builder: (ctx) {
-                      final c = EventStore.instance.colorOf(label);
-                      final onC = c.computeLuminance() > 0.5
-                          ? Colors.black87
-                          : Colors.white;
-                      final current = editing?.label == label;
-                      return ActionChip(
-                        label: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            if (current) ...[
-                              Icon(Icons.check, size: 16, color: onC),
-                              const SizedBox(width: 4),
-                            ],
-                            Text(label, style: TextStyle(color: onC)),
-                          ],
-                        ),
-                        backgroundColor: c,
-                        side: BorderSide(
-                          color:
-                              current ? onC : c.withValues(alpha: 0.6),
-                          width: current ? 2 : 1,
-                        ),
-                        onPressed: () => _punch(label),
-                      );
-                    },
-                  ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _noteController,
-              decoration: const InputDecoration(
-                hintText: '备注',
-                border: OutlineInputBorder(),
-                isDense: true,
+    // 直接跟随 viewInsets（键盘动画期间逐帧更新），与输入法完全同步、零滞后；
+    // SingleChildScrollView 兜底：分类很多 + 键盘弹出时小屏也不溢出。
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+      child: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                editing == null ? '现在在做什么？' : '当时在做什么？',
+                style: theme.textTheme.titleLarge,
               ),
-              textInputAction: TextInputAction.done,
-            ),
-          ],
+              const SizedBox(height: 16),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final label in labels)
+                    Builder(
+                      builder: (ctx) {
+                        final c = EventStore.instance.colorOf(label);
+                        final onC = c.computeLuminance() > 0.5
+                            ? Colors.black87
+                            : Colors.white;
+                        final current = editing?.label == label;
+                        return ActionChip(
+                          label: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (current) ...[
+                                Icon(Icons.check, size: 16, color: onC),
+                                const SizedBox(width: 4),
+                              ],
+                              Text(label, style: TextStyle(color: onC)),
+                            ],
+                          ),
+                          backgroundColor: c,
+                          side: BorderSide(
+                            color: current ? onC : c.withValues(alpha: 0.6),
+                            width: current ? 2 : 1,
+                          ),
+                          onPressed: () => _punch(label),
+                        );
+                      },
+                    ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: _noteController,
+                decoration: const InputDecoration(
+                  hintText: '备注',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+                textInputAction: TextInputAction.done,
+              ),
+            ],
+          ),
         ),
       ),
     );
