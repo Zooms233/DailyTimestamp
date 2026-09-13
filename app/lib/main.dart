@@ -5,12 +5,21 @@ import 'package:flutter/services.dart';
 
 import 'pages/home_page.dart';
 import 'pages/stats_page.dart';
+import 'services/app_settings.dart';
 import 'services/event_store.dart';
 import 'services/storage_access.dart';
+import 'theme/app_theme.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await _restoreThemeMode(); // 恢复用户主题偏好（明亮/深色/自动），失败静默用默认
   runApp(const TimestampApp());
+}
+
+/// 从 settings.json 恢复主题模式；无字段/读取失败时保持默认（跟随系统）。
+Future<void> _restoreThemeMode() async {
+  final saved = await loadThemeMode();
+  if (saved != null) themeModeNotifier.value = saved;
 }
 
 class TimestampApp extends StatelessWidget {
@@ -18,15 +27,17 @@ class TimestampApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: '时间戳记录',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        fontFamily: 'Source Han Sans SC',
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF3E7BFA)),
-        useMaterial3: true,
+    // 监听全局主题模式：统计页切换即重建整树（MaterialApp 换 themeMode）
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: themeModeNotifier,
+      builder: (context, mode, _) => MaterialApp(
+        title: '时间戳记录',
+        debugShowCheckedModeBanner: false,
+        theme: buildLightTheme(),
+        darkTheme: buildDarkTheme(),
+        themeMode: mode, // light=明亮 / dark=深色 / system=跟随系统
+        home: const AppGate(),
       ),
-      home: const AppGate(),
     );
   }
 }

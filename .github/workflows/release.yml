@@ -1,0 +1,56 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+# GITHUB_TOKEN 对新仓库默认只读；创建 Release 与上传产物需要 contents 写权限
+permissions:
+  contents: write
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: 校验 tag 与 pubspec 版本一致
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          # pubspec version 带 build 号（如 1.0.0+1），tag 只对应主版本段，截掉 + 后比较
+          VER=$(grep -P '^version:' app/pubspec.yaml | sed 's/version:\s*//' | cut -d+ -f1)
+          [ "$TAG" = "$VER" ] || { echo "tag($TAG) ≠ pubspec($VER)"; exit 1; }
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # 版本与本地开发环境对齐（Flutter 3.47.2 stable），保证产物可复现
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.47.2"
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+        working-directory: app
+
+      - run: flutter analyze
+        working-directory: app
+
+      # 只面向 arm64 一台机器编译：--target-platform 限定单架构（省一半构建时间），
+      # --split-per-abi 让产物文件名带 abi 标识（app-arm64-v8a-release.apk）
+      - run: flutter build apk --release --target-platform android-arm64 --split-per-abi
+        working-directory: app
+
+      - name: 重命名产物（带版本与平台标识）
+        run: |
+          mv app/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk \
+            "DailyTimestamp-${{ github.ref_name }}-android-arm64.apk"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: DailyTimestamp-${{ github.ref_name }}-android-arm64.apk
+          body: |
+            - `DailyTimestamp-vX.Y.Z-android-arm64.apk`：Android（arm64 手机）安装包

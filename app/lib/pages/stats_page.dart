@@ -8,7 +8,9 @@ import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../services/app_settings.dart';
 import '../services/event_store.dart';
+import '../theme/app_theme.dart';
 import '../utils/format.dart';
 import '../widgets/backup_settings_sheet.dart';
 import '../widgets/timeline_row.dart';
@@ -50,6 +52,20 @@ class StatsPageState extends State<StatsPage> {
   void dispose() {
     _timer?.cancel();
     super.dispose();
+  }
+
+  /// 主题模式中文名（切换菜单展示）。
+  String _themeModeLabel(ThemeMode m) => switch (m) {
+        ThemeMode.light => '明亮',
+        ThemeMode.dark => '深色',
+        ThemeMode.system => '自动（跟随系统）',
+      };
+
+  /// 切换主题模式：全局通知重建（main.dart 监听）+ 写入 settings.json（下次启动恢复）。
+  Future<void> _setThemeMode(ThemeMode mode) async {
+    if (themeModeNotifier.value == mode) return;
+    themeModeNotifier.value = mode;
+    await saveThemeMode(mode);
   }
 
   /// 导出数据：Windows 直存系统下载目录；Android 走系统分享面板。
@@ -287,6 +303,24 @@ class StatsPageState extends State<StatsPage> {
       appBar: AppBar(
         title: const Text('统计'),
         actions: [
+          // 外观切换：明亮 / 深色 / 自动（跟随系统），选择即生效并落盘 settings.json
+          PopupMenuButton<ThemeMode>(
+            icon: Icon(switch (themeModeNotifier.value) {
+              ThemeMode.light => Icons.light_mode_outlined,
+              ThemeMode.dark => Icons.dark_mode_outlined,
+              ThemeMode.system => Icons.brightness_6_outlined,
+            }),
+            tooltip: '外观',
+            onSelected: _setThemeMode,
+            itemBuilder: (context) => [
+              for (final m in ThemeMode.values)
+                CheckedPopupMenuItem(
+                  value: m,
+                  checked: themeModeNotifier.value == m,
+                  child: Text(_themeModeLabel(m)),
+                ),
+            ],
+          ),
           // 自动存档设置（导出左边）
           IconButton(
             icon: const Icon(Icons.settings_outlined),
