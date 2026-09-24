@@ -153,6 +153,9 @@ class _RootPageState extends State<RootPage> with WidgetsBindingObserver {
   /// 切到统计 Tab 时通知其重置为今日
   final _statsKey = GlobalKey<StatsPageState>();
 
+  /// 切回首页 Tab 时通知打卡页跳回今日
+  final _homeKey = GlobalKey<HomePageState>();
+
   @override
   void initState() {
     super.initState();
@@ -184,13 +187,15 @@ class _RootPageState extends State<RootPage> with WidgetsBindingObserver {
         listenable: EventStore.instance,
         builder: (context, _) => IndexedStack(
           index: _index,
-          children: [HomePage(), StatsPage(key: _statsKey)],
+          children: [HomePage(key: _homeKey), StatsPage(key: _statsKey)],
         ),
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
         onDestinationSelected: (i) {
           setState(() => _index = i);
+          // 回到首页时自动跳回今日（打卡页）
+          if (i == 0) _homeKey.currentState?.resetToToday();
           // 回到统计页时自动显示今日（并收起月历）
           if (i == 1) _statsKey.currentState?.resetToToday();
         },

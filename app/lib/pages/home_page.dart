@@ -17,10 +17,10 @@ class HomePage extends StatefulWidget {
   const HomePage({super.key});
 
   @override
-  State<HomePage> createState() => _HomePageState();
+  State<HomePage> createState() => HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class HomePageState extends State<HomePage> {
   Timer? _timer;
 
   /// 正在查看的日期（默认今日；AppBar [<]/[>] 切换，用于回看/修改邻近日期）
@@ -28,6 +28,13 @@ class _HomePageState extends State<HomePage> {
 
   static bool _sameDay(DateTime a, DateTime b) =>
       a.year == b.year && a.month == b.month && a.day == b.day;
+
+  /// 从其他 Tab 切回打卡页时调用：自动跳回今日。
+  void resetToToday() {
+    final today = DateTime.now();
+    if (_sameDay(_viewDay, today)) return; // 已在今日，避免无谓重建
+    setState(() => _viewDay = today);
+  }
 
   /// 切换查看日：delta = -1 上一日 / +1 下一日；不能晚于今日。
   void _shiftDay(int delta) => setState(() {
