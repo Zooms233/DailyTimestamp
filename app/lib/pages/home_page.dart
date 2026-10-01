@@ -145,16 +145,9 @@ class HomePageState extends State<HomePage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _OngoingCard(ongoing: ongoing),
-                const SizedBox(height: 12),
-                FilledButton.icon(
-                  onPressed: () => showPunchSheet(context),
-                  style: FilledButton.styleFrom(
-                    minimumSize: const Size.fromHeight(56),
-                    textStyle: theme.textTheme.titleMedium,
-                  ),
-                  icon: const Icon(Icons.add),
-                  label: const Text('记录新事件'),
+                _OngoingCard(
+                  ongoing: ongoing,
+                  onTap: () => showPunchSheet(context),
                 ),
               ],
             ),
@@ -327,10 +320,15 @@ class HomePageState extends State<HomePage> {
 
 }
 
+/// 进行中卡片：整卡可点 = 记录新事件（旧事件随新打卡自动结束）；
+/// 无进行中（尚无任何记录）时退化为一个真正的「记录新事件」按钮，保住首启入口。
 class _OngoingCard extends StatelessWidget {
-  const _OngoingCard({required this.ongoing});
+  const _OngoingCard({required this.ongoing, required this.onTap});
 
   final TimestampEvent? ongoing;
+
+  /// 点击卡片：打开打卡弹窗，开始新事件。
+  final VoidCallback onTap;
 
   /// 开始时刻文本：当日 HH:MM；昨日「昨HH:MM」；更早「MM-DD HH:MM」（跨多天进行中）。
   String _startText(int ms, DateTime now) {
@@ -349,66 +347,72 @@ class _OngoingCard extends StatelessWidget {
     final theme = Theme.of(context);
     final e = ongoing;
     if (e == null) {
-      return Card(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            children: [
-              Icon(Icons.timelapse, color: theme.colorScheme.outline),
-              const SizedBox(width: 12),
-              Text('当前没有进行中的事件',
-                  style: theme.textTheme.bodyMedium
-                      ?.copyWith(color: theme.colorScheme.outline)),
-            ],
-          ),
+      return FilledButton.icon(
+        onPressed: onTap,
+        style: FilledButton.styleFrom(
+          minimumSize: const Size.fromHeight(56),
+          textStyle: theme.textTheme.titleMedium,
         ),
+        icon: const Icon(Icons.add),
+        label: const Text('记录新事件'),
       );
     }
     final now = DateTime.now();
     final mins = e.duration(now).inMinutes;
     return Card(
       color: theme.colorScheme.primaryContainer,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(
-                  Icons.circle,
-                  size: 12,
-                  color: EventStore.instance.colorOf(e.label),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text.rich(
-                    TextSpan(
-                      text: '进行中：${e.label}',
-                      style: theme.textTheme.titleMedium
-                          ?.copyWith(fontWeight: FontWeight.bold),
-                      children: [
-                        if (e.note case final note? when note.isNotEmpty)
-                          TextSpan(
-                            text: '  $note',
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: theme.colorScheme.onPrimaryContainer,
-                            ),
-                          ),
-                      ],
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    Icons.circle,
+                    size: 12,
+                    color: EventStore.instance.colorOf(e.label),
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '开始于 ${_startText(e.startAt, now)}，已持续 ${fmtZh(mins)}',
-              style: theme.textTheme.bodyMedium,
-            ),
-          ],
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text.rich(
+                      TextSpan(
+                        text: '进行中：${e.label}',
+                        style: theme.textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.bold),
+                        children: [
+                          if (e.note case final note? when note.isNotEmpty)
+                            TextSpan(
+                              text: '  $note',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.colorScheme.onPrimaryContainer,
+                              ),
+                            ),
+                        ],
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  // 低调的可点提示：不写文案，靠卡片高亮色 + 水波反馈
+                  Icon(
+                    Icons.add_circle_outline,
+                    size: 20,
+                    color: theme.colorScheme.onPrimaryContainer
+                        .withValues(alpha: 0.7),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '开始于 ${_startText(e.startAt, now)}，已持续 ${fmtZh(mins)}',
+                style: theme.textTheme.bodyMedium,
+              ),
+            ],
+          ),
         ),
       ),
     );
