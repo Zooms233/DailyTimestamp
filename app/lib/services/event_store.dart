@@ -81,6 +81,11 @@ class EventStore extends ChangeNotifier {
   bool get loaded => _loaded;
   bool _loaded = false;
 
+  /// 上次加载失败的原因（null = 正常）。供 UI 提示，
+  /// 避免「文件在但读不到」被静默成 0 个事件、被误读为数据丢失。
+  String? get loadError => _loadError;
+  String? _loadError;
+
   /// 自动存档开关（设置页控制；默认开，每次记录新事件时触发）。
   bool get autoBackup => _autoBackup;
   bool _autoBackup = true;
@@ -107,7 +112,9 @@ class EventStore extends ChangeNotifier {
   }
 
   /// 启动时加载；文件不存在或损坏都容忍为空数据，不阻塞 UI。
+  /// 失败原因记录在 [loadError]（UI 提示），不弹窗阻断。
   Future<void> load() async {
+    _loadError = null;
     try {
       final file = await _file();
       if (await file.exists()) {
@@ -135,16 +142,37 @@ class EventStore extends ChangeNotifier {
           ..addAll(colors);
         _autoBackup = autoBackup;
       } else {
+        // 文件「不存在」有两种可能：首次使用，或路径不可达
+        // （exists() 在权限不足时会静默返回 false 而非抛异常）。
+        await _checkUnreadable(file);
         _labels
           ..clear()
           ..addAll(defaultLabels);
       }
     } catch (e) {
       debugPrint('EventStore.load: $e');
+      _loadError = '$e';
       if (_labels.isEmpty) _labels.addAll(defaultLabels);
     }
     _loaded = true;
     notifyListeners();
+  }
+
+  /// 文件「不存在」时的二次确认：目录里若确实躺着 events.json，
+  /// 说明是读取受限（典型：缺「所有文件访问」权限，或重装后文件属主变了），
+  /// 而不是真的没有数据。
+  Future<void> _checkUnreadable(File file) async {
+    try {
+      await for (final e in file.parent.list()) {
+        if (e.path.endsWith('events.json')) {
+          _loadError = '检测到数据文件 events.json，但当前无权限读取';
+          return;
+        }
+      }
+    } catch (e) {
+      debugPrint('EventStore.load(check): $e');
+      _loadError = '$e';
+    }
   }
 
   /// 打卡：结束旧进行中事件（endAt=now），开始新事件（startAt=now）。

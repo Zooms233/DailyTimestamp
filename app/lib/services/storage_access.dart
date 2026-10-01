@@ -29,9 +29,15 @@ class StorageAccess {
     return dir;
   }
 
-  /// 可写性检测：真实写入+删除探测文件（桌面端视为已授权，无需授权）。
+  /// 授权检测（桌面端视为已授权，无需授权）。
+  /// 权威判据是系统「所有文件访问」开关（Environment.isExternalStorageManager），
+  /// 不能只靠写探测：部分 ROM（HyperOS / Android 16）在未授权时也允许应用在
+  /// 公共 Documents 下创建新文件，写探测会误判为已授权而跳过权限门，
+  /// 结果就是「没有权限页 + 读不到旧数据（0 个事件）」。
   static Future<bool> isGranted() async {
     if (!Platform.isAndroid) return true;
+    if (!await Permission.manageExternalStorage.isGranted) return false;
+    // 兜底：开关为开时仍要求真能写（应对授权未即时生效等情况）
     try {
       final dir = await root();
       final probe = File('${dir.path}${Platform.pathSeparator}.probe');

@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import '../models/timestamp_event.dart';
 import 'labels_page.dart';
 import '../services/event_store.dart';
+import '../services/storage_access.dart';
 import '../utils/format.dart';
 import '../widgets/punch_sheet.dart';
 import '../widgets/time_offset_picker.dart';
@@ -109,6 +110,11 @@ class HomePageState extends State<HomePage> {
             child: ListView(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
               children: [
+                // 数据加载失败（典型：缺「所有文件访问」权限，文件在但读不到）
+                if (store.loadError != null) ...[
+                  _LoadErrorBanner(message: store.loadError!),
+                  const SizedBox(height: 12),
+                ],
                 Text(
                   '${isToday ? '今日时间轴' : fmtDay(_viewDay)}（${today.length} 个事件）',
                   style: theme.textTheme.titleSmall?.copyWith(
@@ -414,6 +420,47 @@ class _OngoingCard extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// 数据读取失败提示条：常见于缺「所有文件访问」权限——
+/// 数据文件还在磁盘上，但当前应用读不到（例如卸载重装后文件属主变了）。
+/// 直接给出去授权入口，避免用户把「0 个事件」当成数据丢失。
+class _LoadErrorBanner extends StatelessWidget {
+  const _LoadErrorBanner({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
+      decoration: BoxDecoration(
+        color: scheme.errorContainer,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.error_outline, size: 20, color: scheme.onErrorContainer),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '数据读取失败：$message',
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: scheme.onErrorContainer),
+            ),
+          ),
+          TextButton(
+            onPressed: () => StorageAccess.openManageSettings(),
+            child: Text('去授权',
+                style: theme.textTheme.labelLarge
+                    ?.copyWith(color: scheme.onErrorContainer)),
+          ),
+        ],
       ),
     );
   }
